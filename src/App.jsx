@@ -3,55 +3,73 @@ import Sidebar from "./components/Sidebar"
 import Editor from "./components/Editor"
 import Split from "react-split"
 import {nanoid} from "nanoid"
+import { addDoc, deleteDoc, doc, onSnapshot, setDoc } from "firebase/firestore"
+import { notesCollection, db } from "./firebase"
 import 'react-mde/lib/styles/css/react-mde-all.css';
 
 export default function App() {
-    const [notes, setNotes] = React.useState(
-      () => JSON.parse(localStorage.getItem("notes")) || []);
+    const [notes, setNotes] = React.useState([]);
 
-    const [currentNoteId, setCurrentNoteId] = React.useState(
-        (notes[0] && notes[0].id) || ""
-    )
-    
-    function createNewNote() {
-        const newNote = {
-            id: nanoid(),
-            body: "# Type your markdown note's title here"
-        }
-        setNotes(prevNotes => [newNote, ...prevNotes])
-        setCurrentNoteId(newNote.id)
-    }
+    const [currentNoteId, setCurrentNoteId] = React.useState("");
+
+    const [tempNoteText, setTempNoteText] = React.useState("");
+
+    const currentNote =
+    notes.find(note => note.id === currentNoteId) || notes[0];
+
+    const sortedNotes = notes.sort((a, b) => b.updatedAt - a.updatedAt);
 
     React.useEffect(() => {
-      if (notes.length > 0) {
-        localStorage.setItem("notes", JSON.stringify(notes));
+      const unsubscribe = onSnapshot(notesCollection, (snapshot) => {
+        // Sync local notes array with snapshot data
+        const notesArr = snapshot.docs.map(doc => ({
+          ...doc.data(),
+          id: doc.id
+        }));
+        setNotes(notesArr);
+      })
+      return unsubscribe;
+    }, []);
+
+    React.useEffect(() => {
+      if (!currentNoteId) {
+        setCurrentNoteId(notes[0]?.id);
       }
     }, [notes]);
 
-    function updateNote(text) {
-        setNotes(oldNotes => {
-          const newArr = [];
-          oldNotes.map((oldNote) => {
-            if (oldNote.id === currentNoteId) {
-              oldNote = {...oldNote, body: text};
-              newArr.unshift(oldNote);
-            }
-            else
-              newArr.push(oldNote);
-          })
-          return newArr;
-        })
-      }
+    React.useEffect(() => {
+      if (currentNote)
+        setTempNoteText(currentNote.body);
+    }, [currentNote]);
+
+    React.useEffect(() => {
+      const timeoutId = setTimeout(() => {
+        updateNote(tempNoteText);
+      }, 500);
+      return () => clearTimeout(timeoutId);      
+    }, [tempNoteText])
     
-    function findCurrentNote() {
-        return notes.find(note => {
-            return note.id === currentNoteId
-        }) || notes[0]
+    async function createNewNote() {
+        const newNote = {
+            body: "# Type your markdown note's title here",
+            createdAt: Date.now(),
+            updatedAt: Date.now()
+        }
+        const newNoteRef = await addDoc(notesCollection, newNote)
+        setCurrentNoteId(newNoteRef.id)
     }
 
-    function deleteNote(event, noteId) {
-      event.stopPropagation();
-      setNotes(oldNotes => oldNotes.filter((note) => note.id !== noteId));
+    async function updateNote(text) {
+      const docRef = doc(db, "notes", currentNoteId);
+      await setDoc(docRef, 
+        {body: text, updatedAt: Date.now()}, 
+        {merge: true});
+
+    }
+
+    async function deleteNote(noteId) {
+      const docRef = doc(db, "notes", noteId);
+      await deleteDoc(docRef)
     }
     
     return (
@@ -65,18 +83,16 @@ export default function App() {
                 className="split"
             >
                 <Sidebar
-                    notes={notes}
-                    currentNote={findCurrentNote()}
+                    notes={sortedNotes}
+                    currentNote={currentNote}
                     setCurrentNoteId={setCurrentNoteId}
                     newNote={createNewNote}
                     deleteNote={deleteNote}
                 />
                 {
-                    currentNoteId && 
-                    notes.length > 0 &&
                     <Editor 
-                        currentNote={findCurrentNote()} 
-                        updateNote={updateNote} 
+                        tempNoteText={tempNoteText} 
+                        setTempNoteText={setTempNoteText} 
                     />
                 }
             </Split>
